@@ -547,5 +547,3 @@ console.log(`Не найдены: ${(data.not_found ?? []).join(", ")}`);
 
 - Сайт: [https://melonis.wiki](https://melonis.wiki)
 - API: [https://melonis.wiki/api/fetch?sections](https://melonis.wiki/api/fetch?sections)
-- Исходный проект MelonisWiki: [github.com/ClapFy/MelonisWiki](https://github.com/ClapFy/MelonisWiki)
-

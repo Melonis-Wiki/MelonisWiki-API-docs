@@ -1,8 +1,10 @@
 # MelonisWiki API
 
+**API v2:** [ключи, запись статей, история и модерация](V2.md). Этот документ описывает API v1 `/api/fetch`.
+
 Официальная русскоязычная документация публичного API [MelonisWiki](https://melonis.wiki).
 
-API предоставляет чтение статей и разделов в формате JSON. Авторизация и API-ключ не требуются. Основной эндпоинт:
+API предоставляет чтение статей и разделов в формате JSON. Каждый запрос к `/api/fetch` должен содержать API-ключ v1 — как его получить, описано в разделе [Ключ API](#ключ-api). Основной эндпоинт:
 
 ```text
 GET https://melonis.wiki/api/fetch
@@ -12,6 +14,7 @@ API работает только на чтение. Для внешних ин�
 
 ## Содержание
 
+- [Ключ API](#ключ-api)
 - [Быстрый старт](#быстрый-старт)
 - [Режимы запросов](#режимы-запросов)
 - [Параметры](#параметры)
@@ -24,31 +27,53 @@ API работает только на чтение. Для внешних ин�
 - [Примеры интеграции](#примеры-интеграции)
 - [Рекомендации клиентам](#рекомендации-клиентам)
 
+## Ключ API
+
+1. Войдите на melonis.wiki и откройте **Профиль → Разработчикам**.
+2. Заполните заявку на ключ API v1: название проекта и для чего нужен доступ.
+3. После одобрения администратором нажмите **Получить ключ**. Секрет показывается один раз — сохраните его сразу.
+
+Передавайте ключ только в заголовке `Authorization: Bearer mwk_…`. Ключ в адресе (`?api_key=`, `?access_token=`) отклоняется. Не встраивайте ключ в код страниц, который видят посетители, и не публикуйте его в репозиториях.
+
+На одного пользователя — до трёх ключей v1. В том же разделе можно заменить секрет (старый сразу перестаёт действовать), отозвать ключ и посмотреть статистику запросов за 30 дней. Все запросы по ключу, включая отклонённые, учитываются в его статистике, которую видят владелец и администрация.
+
+Ключи v1 дают только чтение `/api/fetch`. Ключи [API v2](V2.md) выдаются администрацией отдельно и для `/api/fetch` не подходят (ответ `403`, `WRONG_API_VERSION`), а ключ v1 не работает в `/api/v2`.
+
 ## Быстрый старт
+
+В примерах ключ хранится в переменной окружения:
+
+```bash
+export MELONIS_API_KEY='mwk_…'
+```
 
 Получить список разделов:
 
 ```bash
-curl -sS 'https://melonis.wiki/api/fetch?sections'
+curl -sS 'https://melonis.wiki/api/fetch?sections' \
+  -H "Authorization: Bearer $MELONIS_API_KEY"
 ```
 
 Найти статьи:
 
 ```bash
 curl -sS --get 'https://melonis.wiki/api/fetch' \
+  -H "Authorization: Bearer $MELONIS_API_KEY" \
   --data-urlencode 'q=спавн'
 ```
 
 Получить полную статью по числовому идентификатору:
 
 ```bash
-curl -sS 'https://melonis.wiki/api/fetch?id=9'
+curl -sS 'https://melonis.wiki/api/fetch?id=9' \
+  -H "Authorization: Bearer $MELONIS_API_KEY"
 ```
 
 Получить список статей раздела:
 
 ```bash
-curl -sS 'https://melonis.wiki/api/fetch?section=information&limit=20&offset=0'
+curl -sS 'https://melonis.wiki/api/fetch?section=information&limit=20&offset=0' \
+  -H "Authorization: Bearer $MELONIS_API_KEY"
 ```
 
 Каждый успешный ответ содержит `"ok": true` и поле `mode`, определяющее форму остальных данных.
@@ -381,8 +406,10 @@ https://melonis.wiki/api/fetch?section=information&limit=2&offset=0&sort=title
 | `200` | Запрос выполнен. | Проверить `ok` и обработать данные. |
 | `204` | Успешный preflight `OPTIONS`. | Тело отсутствует. |
 | `400` | Нет обязательных параметров или параметр некорректен. | Исправить запрос; повтор без изменений бессмысленен. |
+| `401` | Нет ключа, ключ неверный, отключён, истёк, отозван или его владелец заблокирован. Есть заголовок `WWW-Authenticate`. | Проверить ключ в профиле; не повторять в цикле. |
+| `403` | Ключ выдан для другой версии API (`WRONG_API_VERSION`). | Использовать ключ v1. |
 | `404` | Статья или раздел не найдены. | Не повторять автоматически. |
-| `429` | Превышен лимит частоты. | Подождать число секунд из `Retry-After`. |
+| `429` | Превышен лимит ключа (`RATE_LIMITED`) или слишком много запросов с неверным ключом с одного адреса (`AUTH_THROTTLED`). | Подождать число секунд из `Retry-After`. |
 | `500` | Внутренняя ошибка, обработанная API; обычно `code: "INTERNAL"`. | Повторить позже с ограниченным backoff. |
 | `503` | Ошибка маршрута или инфраструктуры, например недоступная БД. | Повторить позже; тело может иметь другую форму. |
 
@@ -398,7 +425,18 @@ Content-Type: application/json
 {
   "ok": false,
   "error": "Слишком много запросов",
+  "code": "RATE_LIMITED",
   "retry_after_sec": 17
+}
+```
+
+Пример ответа без ключа:
+
+```json
+{
+  "ok": false,
+  "error": "Нужен API-ключ v1 в заголовке Authorization: Bearer. Запросите его в профиле: Разработчикам",
+  "code": "INVALID_KEY"
 }
 ```
 
@@ -406,10 +444,11 @@ Content-Type: application/json
 
 | Тип запросов | Лимит |
 |---|---:|
-| Поиск через `q` или `query` | 120 запросов в минуту на ключ клиента |
-| Остальные режимы | 300 запросов в минуту на ключ клиента |
+| Все запросы по ключу | лимит ключа в минуту (по умолчанию 120, указан в профиле) |
+| Поиск через `q` или `query` | дополнительно не больше 120 запросов в минуту на ключ |
+| Запросы с неверным или отозванным ключом | 60 за 10 минут с одного адреса, затем `429` |
 
-Лимитер работает в памяти процесса и является защитой best effort, а не гарантированной глобальной квотой между всеми экземплярами сервера. Клиентам всё равно необходимо:
+Лимит ключа общий для всех экземпляров сервера; лимит поиска и защита от перебора ключей работают в памяти процесса. Если вашему проекту не хватает лимита, напишите об этом в заявке. Клиентам необходимо:
 
 - ограничивать параллелизм;
 - кэшировать повторяющиеся чтения;
@@ -422,12 +461,12 @@ API возвращает `Cache-Control` в зависимости от режи
 
 | Режим | Значение | Максимальный срок |
 |---|---|---:|
-| `sections` | `public, max-age=300, s-maxage=300` | 5 минут |
-| `section_list` | `public, max-age=120` | 2 минуты |
-| `article`, `articles` | `public, max-age=60` | 1 минута |
+| `sections` | `private, max-age=300` | 5 минут |
+| `section_list` | `private, max-age=120` | 2 минуты |
+| `article`, `articles` | `private, max-age=60` | 1 минута |
 | `search` | `no-store` | не кэшировать |
 
-Учитывайте эти заголовки в CDN и клиентском кэше. API не предоставляет отдельный параметр для принудительного обхода серверного или промежуточного кэша.
+Ответы на запросы с ключом помечены `private` и `Vary: Authorization`: их можно кэшировать в своём клиенте, но не в общем CDN. API не предоставляет отдельный параметр для принудительного обхода серверного или промежуточного кэша.
 
 ## CORS
 
@@ -436,7 +475,8 @@ API возвращает `Cache-Control` в зависимости от режи
 ```http
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Accept
+Access-Control-Allow-Headers: Authorization, Content-Type, Accept
+Access-Control-Max-Age: 600
 ```
 
 Preflight-запрос поддерживается:
@@ -445,7 +485,7 @@ Preflight-запрос поддерживается:
 curl -i -X OPTIONS 'https://melonis.wiki/api/fetch'
 ```
 
-Он возвращает `204 No Content`. Cookie и авторизационные заголовки API не нужны. При инфраструктурной ошибке до запуска маршрута CORS-заголовки не гарантируются.
+Он возвращает `204 No Content` и не требует ключа. Cookie не используются. Вызов из браузера раскрывает ключ посетителям — для публичных сайтов делайте запросы со своего сервера. При инфраструктурной ошибке до запуска маршрута CORS-заголовки не гарантируются.
 
 ## Примеры интеграции
 
@@ -459,7 +499,10 @@ async function searchMelonisWiki(query) {
   url.searchParams.set("q", query);
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${process.env.MELONIS_API_KEY}`,
+    },
   });
 
   const contentType = response.headers.get("content-type") ?? "";
@@ -486,6 +529,7 @@ console.log(articles);
 Требуется пакет `requests`:
 
 ```python
+import os
 from urllib.parse import urljoin
 
 import requests
@@ -495,7 +539,10 @@ BASE_URL = "https://melonis.wiki"
 response = requests.get(
     f"{BASE_URL}/api/fetch",
     params={"section": "information", "limit": 20, "offset": 0},
-    headers={"Accept": "application/json"},
+    headers={
+        "Accept": "application/json",
+        "Authorization": f"Bearer {os.environ['MELONIS_API_KEY']}",
+    },
     timeout=15,
 )
 response.raise_for_status()
@@ -515,7 +562,9 @@ const url = new URL("https://melonis.wiki/api/fetch");
 url.searchParams.set("ids", [9, 39].join(","));
 url.searchParams.set("fields", "full");
 
-const response = await fetch(url);
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${process.env.MELONIS_API_KEY}` },
+});
 const data = await response.json();
 
 if (!response.ok || !data.ok) {
@@ -538,6 +587,7 @@ console.log(`Не найдены: ${(data.not_found ?? []).join(", ")}`);
 8. Соблюдайте `Cache-Control` и `Retry-After`.
 9. Безопасно отображайте Markdown из `content`; не вставляйте преобразованный HTML без санитизации.
 10. Не используйте непубличные маршруты сайта как стабильный API-контракт.
+11. Храните ключ как пароль: в переменных окружения или менеджере секретов. Если он утёк, замените секрет в профиле.
 
 ## Совместимость
 
